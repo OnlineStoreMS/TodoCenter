@@ -18,6 +18,12 @@ export interface Todo {
   description: string
   status: string
   priority: string
+  recurrence: string
+  recurrenceDay: number
+  parentId: number
+  periodKey?: string
+  isTemplate: boolean
+  isMonthlyInstance: boolean
   dueAt?: string
   completedAt?: string
   images: MediaItem[]
@@ -61,6 +67,7 @@ export async function listTodos(params: {
   status?: string
   priority?: string
   keyword?: string
+  recurrence?: string
   page?: number
   pageSize?: number
 }) {

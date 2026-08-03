@@ -35,7 +35,8 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	repos := repo.New(db)
 	svc := service.NewTodoService(repos)
-	h := admin.NewHandlers(svc)
+	notifySvc := service.NewNotifyService(repos, svc)
+	h := admin.NewHandlers(svc, notifySvc)
 	uploadH := admin.NewUploadHandler(store)
 	photoH := admin.NewPhotoUploadHandler(store)
 

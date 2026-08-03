@@ -23,10 +23,13 @@ const total = ref(0)
 const categories = ref<Category[]>([])
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
+const editingIsTemplate = ref(false)
+const editingIsInstance = ref(false)
 
 const filters = reactive({
   categoryId: undefined as number | undefined,
   status: '' as string,
+  recurrence: '' as string,
   keyword: '',
   page: 1,
   pageSize: 20,
@@ -38,6 +41,8 @@ const form = reactive({
   description: '',
   status: 'pending',
   priority: 'normal',
+  recurrence: 'none',
+  recurrenceDay: 1,
   dueAt: '',
   images: [] as MediaItem[],
 })
@@ -56,7 +61,23 @@ const priorityOptions = [
   { label: '高', value: 'high' },
 ]
 
-const dialogTitle = computed(() => (editingId.value ? '编辑待办' : '新建待办'))
+const recurrenceFilterOptions = [
+  { label: '全部待办', value: '' },
+  { label: '普通待办', value: 'none' },
+  { label: '月待办实例', value: 'instances' },
+  { label: '固定模板', value: 'templates' },
+]
+
+const dayOptions = Array.from({ length: 28 }, (_, i) => ({ label: `每月 ${i + 1} 日`, value: i + 1 }))
+
+const dialogTitle = computed(() => {
+  if (!editingId.value) return '新建待办'
+  if (editingIsTemplate.value) return '编辑固定月待办'
+  if (editingIsInstance.value) return '编辑本月待办'
+  return '编辑待办'
+})
+
+const isMonthlyForm = computed(() => form.recurrence === 'monthly')
 
 async function loadCategories() {
   categories.value = await listCategories()
@@ -72,6 +93,7 @@ async function loadTodos() {
       categoryId: filters.categoryId,
       status: filters.status || undefined,
       keyword: filters.keyword || undefined,
+      recurrence: filters.recurrence || undefined,
       page: filters.page,
       pageSize: filters.pageSize,
     })
@@ -86,11 +108,15 @@ async function loadTodos() {
 
 function resetForm() {
   editingId.value = null
+  editingIsTemplate.value = false
+  editingIsInstance.value = false
   form.categoryId = categories.value[0]?.id || 0
   form.title = ''
   form.description = ''
   form.status = 'pending'
   form.priority = 'normal'
+  form.recurrence = 'none'
+  form.recurrenceDay = 1
   form.dueAt = ''
   form.images = []
 }
@@ -102,11 +128,19 @@ function openCreate() {
 
 function openEdit(row: Todo) {
   editingId.value = row.id
+  editingIsTemplate.value = !!row.isTemplate
+  editingIsInstance.value = !!row.isMonthlyInstance
   form.categoryId = row.categoryId
   form.title = row.title
   form.description = row.description || ''
   form.status = row.status
   form.priority = row.priority
+  form.recurrence = row.isTemplate || row.recurrence === 'monthly' ? 'monthly' : 'none'
+  if (row.isMonthlyInstance) {
+    // 实例不可改循环类型；展示为月待办只读语义
+    form.recurrence = 'monthly'
+  }
+  form.recurrenceDay = row.recurrenceDay || 1
   form.dueAt = row.dueAt || ''
   form.images = [...(row.images || [])]
   dialogVisible.value = true
@@ -123,21 +157,32 @@ async function save() {
   }
   saving.value = true
   try {
-    const payload = {
+    const payload: Record<string, unknown> = {
       categoryId: form.categoryId,
       title: form.title.trim(),
       description: form.description,
       status: form.status,
       priority: form.priority,
-      dueAt: form.dueAt || undefined,
       images: form.images,
+    }
+    if (editingIsInstance.value) {
+      // 月实例：只改本月内容，不改循环
+      payload.dueAt = form.dueAt || undefined
+      if (!form.dueAt) payload.clearDueAt = true
+    } else {
+      payload.recurrence = form.recurrence
+      payload.recurrenceDay = form.recurrence === 'monthly' ? form.recurrenceDay : 1
+      if (form.recurrence === 'none') {
+        payload.dueAt = form.dueAt || undefined
+        if (!form.dueAt) payload.clearDueAt = true
+      }
     }
     if (editingId.value) {
       await updateTodo(editingId.value, payload)
       ElMessage.success('已保存')
     } else {
-      await createTodo(payload)
-      ElMessage.success('已创建')
+      await createTodo(payload as any)
+      ElMessage.success(form.recurrence === 'monthly' ? '已创建月待办（本月实例已生成）' : '已创建')
     }
     dialogVisible.value = false
     await loadTodos()
@@ -149,6 +194,10 @@ async function save() {
 }
 
 async function onStatusChange(row: Todo, status: string) {
+  if (row.isTemplate) {
+    ElMessage.warning('请对本月实例改状态；固定模板请在「固定模板」中管理')
+    return
+  }
   try {
     await updateTodoStatus(row.id, status)
     ElMessage.success('状态已更新')
@@ -159,8 +208,11 @@ async function onStatusChange(row: Todo, status: string) {
 }
 
 async function onDelete(row: Todo) {
+  const tip = row.isTemplate
+    ? `删除固定模板「${row.title}」后将不再每月生成；已有月份实例仍会保留。确定删除？`
+    : `确定删除「${row.title}」？`
   try {
-    await ElMessageBox.confirm(`确定删除「${row.title}」？`, '删除待办', { type: 'warning' })
+    await ElMessageBox.confirm(tip, '删除待办', { type: 'warning' })
   } catch {
     return
   }
@@ -178,17 +230,31 @@ function onFilterChange() {
   void loadTodos()
 }
 
+function recurrenceTag(row: Todo) {
+  if (row.isTemplate) return { text: '固定模板', type: 'warning' as const }
+  if (row.isMonthlyInstance) return { text: row.periodKey ? `月待办 ${row.periodKey}` : '月待办', type: '' as const }
+  return null
+}
+
 watch(
-  () => route.query.status,
-  (v) => {
-    if (typeof v === 'string') filters.status = v
+  () => [route.query.status, route.query.categoryId, route.query.recurrence] as const,
+  ([status, categoryId, recurrence]) => {
+    filters.status = typeof status === 'string' ? status : ''
+    filters.recurrence = typeof recurrence === 'string' ? recurrence : ''
+    if (typeof categoryId === 'string' && categoryId) {
+      const n = Number(categoryId)
+      filters.categoryId = Number.isFinite(n) && n > 0 ? n : undefined
+    } else {
+      filters.categoryId = undefined
+    }
+    filters.page = 1
+    void loadTodos()
   },
   { immediate: true },
 )
 
 onMounted(async () => {
   await loadCategories()
-  await loadTodos()
 })
 </script>
 
@@ -197,7 +263,10 @@ onMounted(async () => {
     <el-card shadow="never">
       <template #header>
         <div class="row-between">
-          <div class="card-title">待办列表 <span class="count">({{ total }})</span></div>
+          <div class="card-title">
+            待办列表 <span class="count">({{ total }})</span>
+            <span class="hint">月待办会在每月自动生成一条实例</span>
+          </div>
           <el-button type="primary" @click="openCreate">新建待办</el-button>
         </div>
       </template>
@@ -208,6 +277,9 @@ onMounted(async () => {
         </el-select>
         <el-select v-model="filters.status" style="width: 130px" @change="onFilterChange">
           <el-option v-for="o in statusOptions" :key="o.value || 'all'" :label="o.label" :value="o.value" />
+        </el-select>
+        <el-select v-model="filters.recurrence" style="width: 140px" @change="onFilterChange">
+          <el-option v-for="o in recurrenceFilterOptions" :key="o.value || 'all'" :label="o.label" :value="o.value" />
         </el-select>
         <el-input
           v-model="filters.keyword"
@@ -221,7 +293,14 @@ onMounted(async () => {
       </div>
 
       <el-table :data="todos" v-loading="loading" stripe border empty-text="暂无待办">
-        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.title }}</span>
+            <el-tag v-if="recurrenceTag(row)" :type="recurrenceTag(row)!.type" size="small" class="ml">
+              {{ recurrenceTag(row)!.text }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="categoryName" label="分类" width="90" />
         <el-table-column label="优先级" width="80">
           <template #default="{ row }">
@@ -230,11 +309,18 @@ onMounted(async () => {
             <span v-else>普通</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="120">
+        <el-table-column label="状态" width="140" class-name="col-status">
           <template #default="{ row }">
-            <el-select :model-value="row.status" size="small" style="width: 100px" @change="(v: string) => onStatusChange(row, v)">
+            <el-select
+              v-if="!row.isTemplate"
+              :model-value="row.status"
+              size="small"
+              class="status-select"
+              @change="(v: string) => onStatusChange(row, v)"
+            >
               <el-option v-for="o in statusOptions.filter((x) => x.value)" :key="o.value" :label="o.label" :value="o.value" />
             </el-select>
+            <span v-else class="muted">模板</span>
           </template>
         </el-table-column>
         <el-table-column label="图片" width="100">
@@ -276,7 +362,7 @@ onMounted(async () => {
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="640px" destroy-on-close>
-      <el-form label-width="88px">
+      <el-form label-width="96px">
         <el-form-item label="分类" required>
           <el-select v-model="form.categoryId" style="width: 100%">
             <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
@@ -288,7 +374,29 @@ onMounted(async () => {
         <el-form-item label="说明">
           <el-input v-model="form.description" type="textarea" :rows="3" />
         </el-form-item>
-        <el-form-item label="状态">
+
+        <el-form-item v-if="!editingIsInstance" label="循环">
+          <el-radio-group v-model="form.recurrence" :disabled="editingIsInstance">
+            <el-radio-button label="none">普通待办</el-radio-button>
+            <el-radio-button label="monthly">固定月待办</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="isMonthlyForm && !editingIsInstance" label="每月几号">
+          <el-select v-model="form.recurrenceDay" style="width: 200px">
+            <el-option v-for="d in dayOptions" :key="d.value" :label="d.label" :value="d.value" />
+          </el-select>
+          <span class="form-tip">每月自动生成一条待处理实例</span>
+        </el-form-item>
+        <el-alert
+          v-if="editingIsInstance"
+          type="info"
+          :closable="false"
+          show-icon
+          title="这是本月生成的月待办实例，改状态/内容只影响本月；固定规则请到「固定模板」筛选中编辑。"
+          style="margin-bottom: 12px"
+        />
+
+        <el-form-item v-if="!isMonthlyForm || editingIsInstance" label="状态">
           <el-radio-group v-model="form.status">
             <el-radio-button v-for="o in statusOptions.filter((x) => x.value)" :key="o.value" :label="o.value">
               {{ o.label }}
@@ -300,7 +408,7 @@ onMounted(async () => {
             <el-radio-button v-for="o in priorityOptions" :key="o.value" :label="o.value">{{ o.label }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="截止时间">
+        <el-form-item v-if="!isMonthlyForm || editingIsInstance" label="截止时间">
           <el-date-picker
             v-model="form.dueAt"
             type="datetime"
@@ -322,12 +430,20 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.row-between { display: flex; justify-content: space-between; align-items: center; }
+.row-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .card-title { font-weight: 600; }
 .count { color: #909399; font-weight: 400; }
+.hint { margin-left: 12px; color: #909399; font-size: 12px; font-weight: 400; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .pager { margin-top: 16px; display: flex; justify-content: flex-end; }
 .thumbs { display: flex; gap: 4px; }
 .thumb { width: 36px; height: 36px; border-radius: 4px; }
 .muted { color: #909399; }
+.ml { margin-left: 8px; }
+.form-tip { margin-left: 12px; color: #909399; font-size: 12px; }
+.status-select { width: 100%; }
+:deep(.col-status .cell) {
+  overflow: visible;
+  text-overflow: clip;
+}
 </style>

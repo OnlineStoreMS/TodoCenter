@@ -2,8 +2,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { getToken, redirectToPortal, ensureSession, clearToken } from '../utils/auth'
 
-const APP_TITLE = 'TodoCenter - 待办中心'
-
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -33,6 +31,7 @@ const router = createRouter({
         { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '工作台' } },
         { path: 'todos', name: 'Todos', component: () => import('../views/Todos.vue'), meta: { title: '待办列表' } },
         { path: 'categories', name: 'Categories', component: () => import('../views/Categories.vue'), meta: { title: '分类管理' } },
+        { path: 'notifications', name: 'Notifications', component: () => import('../views/Notifications.vue'), meta: { title: '通知管理' } },
       ],
     },
   ],
@@ -51,11 +50,6 @@ router.beforeEach(async (to) => {
     return false
   }
   return true
-})
-
-router.afterEach((to) => {
-  const page = to.meta.title as string | undefined
-  document.title = page ? `${page} - ${APP_TITLE}` : APP_TITLE
 })
 
 export default router

@@ -10,6 +10,7 @@ type Repos struct {
 	db       *gorm.DB
 	Category *CategoryRepo
 	Todo     *TodoRepo
+	Notify   *NotifyRepo
 }
 
 func New(db *gorm.DB) *Repos {
@@ -17,6 +18,7 @@ func New(db *gorm.DB) *Repos {
 		db:       db,
 		Category: NewCategoryRepo(db),
 		Todo:     NewTodoRepo(db),
+		Notify:   NewNotifyRepo(db),
 	}
 }
 

@@ -38,6 +38,12 @@ type TodoDTO struct {
 	Description    string      `json:"description"`
 	Status         string      `json:"status"`
 	Priority       string      `json:"priority"`
+	Recurrence     string      `json:"recurrence"`               // none | monthly
+	RecurrenceDay  int         `json:"recurrenceDay"`            // 1-28
+	ParentID       uint64      `json:"parentId"`                // >0 表示某月实例
+	PeriodKey      string      `json:"periodKey,omitempty"`     // YYYY-MM
+	IsTemplate     bool        `json:"isTemplate"`              // 固定月待办模板
+	IsMonthlyInst  bool        `json:"isMonthlyInstance"`       // 本月（或某月）生成的实例
 	DueAt          string      `json:"dueAt,omitempty"`
 	CompletedAt    string      `json:"completedAt,omitempty"`
 	Images         []MediaItem `json:"images"`
@@ -53,6 +59,8 @@ type TodoCreateReq struct {
 	Description    string      `json:"description"`
 	Status         string      `json:"status"`
 	Priority       string      `json:"priority"`
+	Recurrence     string      `json:"recurrence"`     // none | monthly
+	RecurrenceDay  int         `json:"recurrenceDay"`  // 1-28，月待办用
 	DueAt          string      `json:"dueAt"`
 	Images         []MediaItem `json:"images"`
 	AssigneeUserID uint64      `json:"assigneeUserId"`
@@ -64,6 +72,8 @@ type TodoUpdateReq struct {
 	Description    *string     `json:"description"`
 	Status         *string     `json:"status"`
 	Priority       *string     `json:"priority"`
+	Recurrence     *string     `json:"recurrence"`
+	RecurrenceDay  *int        `json:"recurrenceDay"`
 	DueAt          *string     `json:"dueAt"`
 	ClearDueAt     bool        `json:"clearDueAt"`
 	Images         []MediaItem `json:"images"`
@@ -79,8 +89,10 @@ type TodoListQuery struct {
 	Status     string `form:"status"`
 	Priority   string `form:"priority"`
 	Keyword    string `form:"keyword"`
-	Page       int    `form:"page"`
-	PageSize   int    `form:"pageSize"`
+	// RecurrenceFilter: all | none | monthly | templates（仅固定模板）| instances（仅月实例）
+	RecurrenceFilter string `form:"recurrence"`
+	Page             int    `form:"page"`
+	PageSize         int    `form:"pageSize"`
 }
 
 type DashboardStats struct {

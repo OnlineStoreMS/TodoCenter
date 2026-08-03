@@ -16,4 +16,10 @@ func RegisterRoutes(g *gin.RouterGroup, h *Handlers) {
 	g.PUT("/todos/:id", h.UpdateTodo)
 	g.PATCH("/todos/:id/status", h.UpdateTodoStatus)
 	g.DELETE("/todos/:id", h.DeleteTodo)
+
+	g.GET("/notifications", h.GetNotify)
+	g.PUT("/notifications", h.SaveNotify)
+	g.POST("/notifications/test", h.TestNotify)
+	g.POST("/notifications/run", h.RunNotify)
+	g.POST("/notifications/reset-state", h.ResetNotifyState)
 }

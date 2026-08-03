@@ -14,11 +14,12 @@ import (
 )
 
 type Handlers struct {
-	svc *service.TodoService
+	svc       *service.TodoService
+	notifySvc *service.NotifyService
 }
 
-func NewHandlers(svc *service.TodoService) *Handlers {
-	return &Handlers{svc: svc}
+func NewHandlers(svc *service.TodoService, notifySvc *service.NotifyService) *Handlers {
+	return &Handlers{svc: svc, notifySvc: notifySvc}
 }
 
 func (h *Handlers) mapError(c *gin.Context, err error) {
@@ -172,4 +173,57 @@ func (h *Handlers) DeleteTodo(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"ok": true})
+}
+
+func (h *Handlers) GetNotify(c *gin.Context) {
+	cfg, st, err := h.notifySvc.Get(authcontext.TenantID(c))
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"config": cfg, "state": st})
+}
+
+func (h *Handlers) SaveNotify(c *gin.Context) {
+	var req service.NotifySaveReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg, st, err := h.notifySvc.Save(authcontext.TenantID(c), req)
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"config": cfg, "state": st})
+}
+
+func (h *Handlers) TestNotify(c *gin.Context) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := h.notifySvc.Test(c.Request.Context(), authcontext.TenantID(c), body.Text); err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"ok": true})
+}
+
+func (h *Handlers) RunNotify(c *gin.Context) {
+	sent, err := h.notifySvc.RunOnce(c.Request.Context(), authcontext.TenantID(c))
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"sent": sent})
+}
+
+func (h *Handlers) ResetNotifyState(c *gin.Context) {
+	cfg, st, err := h.notifySvc.ResetState(authcontext.TenantID(c))
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"config": cfg, "state": st})
 }

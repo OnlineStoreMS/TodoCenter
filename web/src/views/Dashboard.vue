@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { List, FolderOpened, CircleCheck, Clock } from '@element-plus/icons-vue'
 import { fetchDashboardStats, listCategories, type DashboardStats, type Category } from '../api/todo'
 
 const router = useRouter()
@@ -23,6 +22,116 @@ const catNameByCode = computed(() => {
   return m
 })
 
+const catIdByCode = computed(() => {
+  const m: Record<string, number> = {}
+  for (const c of categories.value) m[c.code] = c.id
+  return m
+})
+
+const statusCards = computed(() => [
+  {
+    key: 'total',
+    label: '全部',
+    tip: '普通待办 + 月实例',
+    value: stats.value.total,
+    color: '#1677ff',
+    go: () => goTodos(),
+  },
+  {
+    key: 'pending',
+    label: '待处理',
+    tip: '需跟进',
+    value: stats.value.pending,
+    color: '#e6a23c',
+    go: () => goTodos({ status: 'pending' }),
+  },
+  {
+    key: 'in_progress',
+    label: '进行中',
+    tip: '处理中',
+    value: stats.value.inProgress,
+    color: '#409eff',
+    go: () => goTodos({ status: 'in_progress' }),
+  },
+  {
+    key: 'done',
+    label: '已完成',
+    tip: '已收工',
+    value: stats.value.done,
+    color: '#67c23a',
+    go: () => goTodos({ status: 'done' }),
+  },
+  {
+    key: 'cancelled',
+    label: '已取消',
+    tip: '不再处理',
+    value: stats.value.cancelled,
+    color: '#909399',
+    go: () => goTodos({ status: 'cancelled' }),
+  },
+])
+
+const entryCards = computed(() => [
+  {
+    key: 'list',
+    label: '待办列表',
+    tip: '新建、筛选与跟进',
+    value: stats.value.total,
+    color: '#1677ff',
+    go: () => goTodos(),
+  },
+  {
+    key: 'pending',
+    label: '待处理',
+    tip: '优先跟进',
+    value: stats.value.pending,
+    color: '#e6a23c',
+    go: () => goTodos({ status: 'pending' }),
+  },
+  {
+    key: 'monthly',
+    label: '固定月待办',
+    tip: '管理每月循环模板',
+    value: '模板',
+    color: '#f56c6c',
+    go: () => goTodos({ recurrence: 'templates' }),
+  },
+  {
+    key: 'done',
+    label: '已完成',
+    tip: '历史完成项',
+    value: stats.value.done,
+    color: '#0f766e',
+    go: () => goTodos({ status: 'done' }),
+  },
+  {
+    key: 'categories',
+    label: '分类管理',
+    tip: '电商 / 发货 / 售后 / 门店',
+    value: categories.value.length,
+    color: '#595959',
+    go: () => router.push('/categories'),
+  },
+  {
+    key: 'notifications',
+    label: '通知管理',
+    tip: '飞书到期提醒',
+    value: '推送',
+    color: '#722ed1',
+    go: () => router.push('/notifications'),
+  },
+])
+
+const categoryChips = computed(() => {
+  const seed = ['ecommerce', 'shipping', 'aftersales', 'store']
+  const codes = new Set([...seed, ...Object.keys(stats.value.byCategory || {})])
+  return [...codes].map((code) => ({
+    code,
+    name: catNameByCode.value[code] || code,
+    count: stats.value.byCategory?.[code] || 0,
+  }))
+})
+
 async function load() {
   loading.value = true
   try {
@@ -36,72 +145,184 @@ async function load() {
   }
 }
 
+function goTodos(query: Record<string, string> = {}) {
+  router.push({ path: '/todos', query })
+}
+
+function goCategory(code: string) {
+  const id = catIdByCode.value[code]
+  if (!id) {
+    goTodos()
+    return
+  }
+  goTodos({ categoryId: String(id) })
+}
+
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="dashboard">
-    <h2 class="page-title">待办中心</h2>
-    <p class="desc">统一记录电商、发货、售后、门店等业务待办，支持图片笔记与手机扫码上传。</p>
-
-    <div class="stat-row">
-      <el-card shadow="never" class="stat"><div class="n">{{ stats.total }}</div><div class="l">全部</div></el-card>
-      <el-card shadow="never" class="stat warn"><div class="n">{{ stats.pending }}</div><div class="l">待处理</div></el-card>
-      <el-card shadow="never" class="stat"><div class="n">{{ stats.inProgress }}</div><div class="l">进行中</div></el-card>
-      <el-card shadow="never" class="stat ok"><div class="n">{{ stats.done }}</div><div class="l">已完成</div></el-card>
+  <div v-loading="loading" class="page">
+    <div class="section-head">状态概览</div>
+    <div class="work-cards">
+      <button
+        v-for="c in statusCards"
+        :key="c.key"
+        type="button"
+        class="work-card"
+        :style="{ '--accent': c.color }"
+        @click="c.go()"
+      >
+        <div class="work-label">{{ c.label }}</div>
+        <div class="work-value">{{ c.value }}</div>
+        <div class="work-tip">{{ c.tip }}</div>
+      </button>
     </div>
 
-    <div class="card-grid">
-      <el-card shadow="hover" class="action-card" @click="router.push('/todos')">
-        <el-icon :size="32" color="#409eff"><List /></el-icon>
-        <h3>待办列表</h3>
-        <p>新建、筛选与跟进待办</p>
-      </el-card>
-      <el-card shadow="hover" class="action-card" @click="router.push('/todos?status=pending')">
-        <el-icon :size="32" color="#e6a23c"><Clock /></el-icon>
-        <h3>待处理</h3>
-        <p>{{ stats.pending }} 条待跟进</p>
-      </el-card>
-      <el-card shadow="hover" class="action-card" @click="router.push('/todos?status=done')">
-        <el-icon :size="32" color="#67c23a"><CircleCheck /></el-icon>
-        <h3>已完成</h3>
-        <p>{{ stats.done }} 条已完成</p>
-      </el-card>
-      <el-card shadow="hover" class="action-card" @click="router.push('/categories')">
-        <el-icon :size="32" color="#909399"><FolderOpened /></el-icon>
-        <h3>分类管理</h3>
-        <p>电商 / 发货 / 售后 / 门店</p>
-      </el-card>
+    <div class="section-head">快捷入口</div>
+    <div class="work-cards">
+      <button
+        v-for="c in entryCards"
+        :key="c.key"
+        type="button"
+        class="work-card"
+        :style="{ '--accent': c.color }"
+        @click="c.go()"
+      >
+        <div class="work-label">{{ c.label }}</div>
+        <div class="work-value entry-value">{{ c.value }}</div>
+        <div class="work-tip">{{ c.tip }}</div>
+      </button>
     </div>
 
-    <el-card shadow="never" class="by-cat">
-      <template #header>分类待办数</template>
-      <div class="cat-list">
-        <div v-for="(cnt, code) in stats.byCategory" :key="code" class="cat-item">
-          <span>{{ catNameByCode[code] || code }}</span>
-          <strong>{{ cnt }}</strong>
+    <section class="status-panel">
+      <h3>业务分类</h3>
+      <div class="chips">
+        <div
+          v-for="c in categoryChips"
+          :key="c.code"
+          class="chip"
+          @click="goCategory(c.code)"
+        >
+          <span>{{ c.name }}</span>
+          <strong>{{ c.count }}</strong>
         </div>
-        <div v-if="!Object.keys(stats.byCategory || {}).length" class="muted">暂无数据</div>
+        <div v-if="!categoryChips.length" class="empty">暂无分类数据</div>
       </div>
-    </el-card>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.page-title { margin: 0 0 8px; font-size: 20px; }
-.desc { color: #909399; margin: 0 0 20px; }
-.stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-.stat { width: 140px; text-align: center; }
-.stat .n { font-size: 28px; font-weight: 600; color: #303133; }
-.stat.warn .n { color: #e6a23c; }
-.stat.ok .n { color: #67c23a; }
-.stat .l { color: #909399; font-size: 13px; margin-top: 4px; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
-.action-card { cursor: pointer; text-align: center; padding: 8px 0; }
-.action-card h3 { margin: 12px 0 6px; font-size: 16px; }
-.action-card p { margin: 0; color: #909399; font-size: 13px; }
-.by-cat { max-width: 480px; }
-.cat-list { display: flex; flex-direction: column; gap: 8px; }
-.cat-item { display: flex; justify-content: space-between; }
-.muted { color: #909399; }
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.section-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.work-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.work-card {
+  text-align: left;
+  border: 1px solid #e8edf3;
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  border-top: 3px solid var(--accent, #1677ff);
+  transition: box-shadow 0.15s, border-color 0.15s;
+  font: inherit;
+  color: inherit;
+}
+.work-card:hover {
+  box-shadow: 0 4px 14px rgba(15, 39, 68, 0.08);
+}
+
+.work-label {
+  font-size: 13px;
+  color: #64748b;
+}
+.work-value {
+  margin-top: 6px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.1;
+}
+.entry-value {
+  font-size: 24px;
+}
+.work-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.status-panel {
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px 18px;
+  border: 1px solid #eef0f3;
+  width: 100%;
+}
+.status-panel h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #334155;
+}
+
+.chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.chip {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.chip:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.chip strong {
+  color: #0f172a;
+}
+.empty {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .work-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .work-cards,
+  .chips {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 </style>

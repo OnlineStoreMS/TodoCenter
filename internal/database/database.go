@@ -38,8 +38,17 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&model.TodoCategory{},
 		&model.Todo{},
+		&model.TenantTodoNotify{},
 	); err != nil {
 		return err
+	}
+	// 同一模板同一账期只生成一条实例（软删行不计入）
+	if db.Dialector.Name() == "postgres" {
+		_ = db.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS uk_todo_parent_period
+ON todos (tenant_id, parent_id, period_key)
+WHERE parent_id > 0 AND deleted_at IS NULL
+`).Error
 	}
 	if err := seed.EnsureDefaultCategories(db, 1); err != nil {
 		log.Printf("seed default categories: %v", err)

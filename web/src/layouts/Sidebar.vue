@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { HomeFilled, List, FolderOpened } from '@element-plus/icons-vue'
+import { HomeFilled, List, FolderOpened, Bell } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,6 +10,7 @@ const collapsed = defineModel<boolean>('collapsed', { default: false })
 const activeMenu = computed(() => {
   if (route.path.startsWith('/todos')) return '/todos'
   if (route.path.startsWith('/categories')) return '/categories'
+  if (route.path.startsWith('/notifications')) return '/notifications'
   return route.path
 })
 
@@ -17,6 +18,7 @@ const menuItems = [
   { path: '/dashboard', title: '工作台', icon: HomeFilled },
   { path: '/todos', title: '待办列表', icon: List },
   { path: '/categories', title: '分类管理', icon: FolderOpened },
+  { path: '/notifications', title: '通知管理', icon: Bell },
 ]
 
 const logoText = computed(() => (collapsed.value ? 'TD' : '待办中心'))

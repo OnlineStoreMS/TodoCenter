@@ -8,7 +8,10 @@ import (
 
 	"todocenter/internal/config"
 	"todocenter/internal/database"
+	"todocenter/internal/repo"
 	"todocenter/internal/router"
+	"todocenter/internal/scheduler"
+	"todocenter/internal/service"
 )
 
 func main() {
@@ -32,6 +35,11 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("database connected: driver=%s", cfg.Database.Driver)
+
+	repos := repo.New(db)
+	todoSvc := service.NewTodoService(repos)
+	notifySvc := service.NewNotifyService(repos, todoSvc)
+	scheduler.StartDueNotify(notifySvc)
 
 	engine := router.Setup(db, cfg)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

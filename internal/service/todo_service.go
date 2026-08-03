@@ -26,6 +26,7 @@ func (s *TodoService) ensureCats(tenantID uint64) error {
 
 func (s *TodoService) DashboardStats(tenantID uint64) (*dto.DashboardStats, error) {
 	_ = s.ensureCats(tenantID)
+	_ = s.EnsureMonthlyInstances(tenantID)
 	total, err := s.repos.Todo.CountAll(tenantID)
 	if err != nil {
 		return nil, err
@@ -144,6 +145,7 @@ func (s *TodoService) DeleteCategory(tenantID, id uint64) error {
 
 func (s *TodoService) ListTodos(tenantID uint64, q dto.TodoListQuery) ([]dto.TodoDTO, int64, error) {
 	_ = s.ensureCats(tenantID)
+	_ = s.EnsureMonthlyInstances(tenantID)
 	list, total, err := s.repos.Todo.List(tenantID, q)
 	if err != nil {
 		return nil, 0, err
@@ -200,6 +202,9 @@ func (s *TodoService) CreateTodo(tenantID, userID uint64, req dto.TodoCreateReq)
 	if !validPriority(priority) {
 		return nil, ErrBadRequest
 	}
+	recurrence := normalizeRecurrence(req.Recurrence)
+	recDay := normalizeRecurrenceDay(req.RecurrenceDay)
+
 	row := &model.Todo{
 		TenantID:       repo.NormalizeTenantID(tenantID),
 		CategoryID:     req.CategoryID,
@@ -207,19 +212,39 @@ func (s *TodoService) CreateTodo(tenantID, userID uint64, req dto.TodoCreateReq)
 		Description:    strings.TrimSpace(req.Description),
 		Status:         status,
 		Priority:       priority,
+		Recurrence:     recurrence,
+		RecurrenceDay:  recDay,
 		ImagesJSON:     mustJSON(req.Images),
 		AssigneeUserID: req.AssigneeUserID,
 		CreatedBy:      userID,
 	}
-	if due, ok := parseOptionalTime(req.DueAt); ok {
-		row.DueAt = due
-	}
-	if status == model.TodoStatusDone {
-		now := time.Now()
-		row.CompletedAt = &now
+	if recurrence == model.RecurrenceMonthly {
+		// 模板本身不走完成态；本月实例单独生成
+		row.Status = model.TodoStatusPending
+		row.CompletedAt = nil
+		row.DueAt = nil
+	} else {
+		if due, ok := parseOptionalTime(req.DueAt); ok {
+			row.DueAt = due
+		}
+		if status == model.TodoStatusDone {
+			now := time.Now()
+			row.CompletedAt = &now
+		}
 	}
 	if err := s.repos.Todo.Create(row); err != nil {
 		return nil, err
+	}
+	if recurrence == model.RecurrenceMonthly {
+		if _, err := s.materializeInstance(tenantID, userID, row, time.Now()); err != nil {
+			return nil, err
+		}
+		// 返回本月实例，便于列表立即看到
+		period := periodKeyOf(time.Now())
+		inst, err := s.repos.Todo.FindInstance(tenantID, row.ID, period)
+		if err == nil && inst != nil {
+			return s.GetTodo(tenantID, inst.ID)
+		}
 	}
 	return s.GetTodo(tenantID, row.ID)
 }
@@ -254,7 +279,25 @@ func (s *TodoService) UpdateTodo(tenantID, id uint64, req dto.TodoUpdateReq) (*d
 		if !validStatus(*req.Status) {
 			return nil, ErrBadRequest
 		}
-		s.applyStatus(row, *req.Status)
+		// 模板不改状态；改状态请操作本月实例
+		if !(row.ParentID == 0 && row.Recurrence == model.RecurrenceMonthly) {
+			s.applyStatus(row, *req.Status)
+		}
+	}
+	if req.Recurrence != nil || req.RecurrenceDay != nil {
+		// 仅模板或普通待办可改循环；实例跟随模板，不允许单独改循环
+		if row.ParentID > 0 {
+			return nil, ErrBadRequest
+		}
+		if req.Recurrence != nil {
+			row.Recurrence = normalizeRecurrence(*req.Recurrence)
+		}
+		if req.RecurrenceDay != nil {
+			row.RecurrenceDay = normalizeRecurrenceDay(*req.RecurrenceDay)
+		}
+		if row.Recurrence == model.RecurrenceNone {
+			row.RecurrenceDay = 1
+		}
 	}
 	if req.ClearDueAt {
 		row.DueAt = nil
@@ -273,6 +316,10 @@ func (s *TodoService) UpdateTodo(tenantID, id uint64, req dto.TodoUpdateReq) (*d
 	}
 	if err := s.repos.Todo.Update(row); err != nil {
 		return nil, err
+	}
+	// 升级为月待办后补生成本月实例
+	if row.ParentID == 0 && row.Recurrence == model.RecurrenceMonthly {
+		_, _ = s.materializeInstance(tenantID, row.CreatedBy, row, time.Now())
 	}
 	return s.GetTodo(tenantID, id)
 }
@@ -296,14 +343,66 @@ func (s *TodoService) UpdateTodoStatus(tenantID, id uint64, status string) (*dto
 }
 
 func (s *TodoService) DeleteTodo(tenantID, id uint64) error {
-	_, err := s.repos.Todo.Get(tenantID, id)
+	row, err := s.repos.Todo.Get(tenantID, id)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return ErrNotFound
 		}
 		return err
 	}
-	return s.repos.Todo.Delete(tenantID, id)
+	return s.repos.Todo.Delete(tenantID, row.ID)
+}
+
+// EnsureMonthlyInstances 为所有月待办模板补齐当前账期实例。
+func (s *TodoService) EnsureMonthlyInstances(tenantID uint64) error {
+	templates, err := s.repos.Todo.ListMonthlyTemplates(tenantID)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for i := range templates {
+		if _, err := s.materializeInstance(tenantID, templates[i].CreatedBy, &templates[i], now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *TodoService) materializeInstance(tenantID, userID uint64, tpl *model.Todo, at time.Time) (*model.Todo, error) {
+	if tpl == nil || tpl.ID == 0 || tpl.Recurrence != model.RecurrenceMonthly {
+		return nil, nil
+	}
+	period := periodKeyOf(at)
+	if existing, err := s.repos.Todo.FindInstance(tenantID, tpl.ID, period); err == nil && existing != nil {
+		return existing, nil
+	} else if err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	due := dueAtForMonth(at, tpl.RecurrenceDay)
+	inst := &model.Todo{
+		TenantID:       repo.NormalizeTenantID(tenantID),
+		CategoryID:     tpl.CategoryID,
+		Title:          tpl.Title,
+		Description:    tpl.Description,
+		Status:         model.TodoStatusPending,
+		Priority:       tpl.Priority,
+		Recurrence:     model.RecurrenceNone, // 实例本身不再循环
+		RecurrenceDay:  tpl.RecurrenceDay,
+		ParentID:       tpl.ID,
+		PeriodKey:      period,
+		DueAt:          &due,
+		ImagesJSON:     tpl.ImagesJSON,
+		AssigneeUserID: tpl.AssigneeUserID,
+		CreatedBy:      userID,
+	}
+	if err := s.repos.Todo.Create(inst); err != nil {
+		// 并发下可能撞唯一索引，再查一次
+		if existing, e2 := s.repos.Todo.FindInstance(tenantID, tpl.ID, period); e2 == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return inst, nil
 }
 
 func (s *TodoService) applyStatus(row *model.Todo, status string) {
@@ -332,6 +431,37 @@ func validPriority(p string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeRecurrence(v string) string {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case model.RecurrenceMonthly:
+		return model.RecurrenceMonthly
+	default:
+		return model.RecurrenceNone
+	}
+}
+
+func normalizeRecurrenceDay(d int) int {
+	if d < 1 {
+		return 1
+	}
+	if d > 28 {
+		return 28
+	}
+	return d
+}
+
+func periodKeyOf(t time.Time) string {
+	return t.Format("2006-01")
+}
+
+func dueAtForMonth(at time.Time, day int) time.Time {
+	day = normalizeRecurrenceDay(day)
+	y, m, _ := at.Date()
+	loc := at.Location()
+	// 取当月最后一天，避免 2 月越界（已限制 1-28）
+	return time.Date(y, m, day, 23, 59, 59, 0, loc)
 }
 
 func mustJSON(images []dto.MediaItem) string {
@@ -380,6 +510,11 @@ func formatTime(t *time.Time) string {
 }
 
 func toTodoDTO(row *model.Todo, cat model.TodoCategory) dto.TodoDTO {
+	rec := row.Recurrence
+	if rec == "" {
+		rec = model.RecurrenceNone
+	}
+	isTpl := row.ParentID == 0 && rec == model.RecurrenceMonthly
 	return dto.TodoDTO{
 		ID:             row.ID,
 		CategoryID:     row.CategoryID,
@@ -389,6 +524,12 @@ func toTodoDTO(row *model.Todo, cat model.TodoCategory) dto.TodoDTO {
 		Description:    row.Description,
 		Status:         row.Status,
 		Priority:       row.Priority,
+		Recurrence:     rec,
+		RecurrenceDay:  row.RecurrenceDay,
+		ParentID:       row.ParentID,
+		PeriodKey:      row.PeriodKey,
+		IsTemplate:     isTpl,
+		IsMonthlyInst:  row.ParentID > 0,
 		DueAt:          formatTime(row.DueAt),
 		CompletedAt:    formatTime(row.CompletedAt),
 		Images:         parseImages(row.ImagesJSON),
