@@ -87,7 +87,7 @@ async function openScan() {
   try {
     const session = await createPhotoUploadSession(props.subdir, 'media')
     scanToken.value = session.token
-    const pageUrl = `${window.location.origin}/m/photo-upload?token=${encodeURIComponent(session.token)}&mode=media`
+    const pageUrl = `${window.location.origin}${import.meta.env.BASE_URL || '/'}m/photo-upload?token=${encodeURIComponent(session.token)}&mode=media`
     qrDataUrl.value = await QRCode.toDataURL(pageUrl, {
       width: 220,
       margin: 2,
