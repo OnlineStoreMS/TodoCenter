@@ -29,8 +29,11 @@ const editingIsInstance = ref(false)
 const filters = reactive({
   categoryId: undefined as number | undefined,
   status: '' as string,
+  priority: '' as string,
   recurrence: '' as string,
   keyword: '',
+  sortBy: '' as string,
+  sortOrder: '' as '' | 'asc' | 'desc',
   page: 1,
   pageSize: 20,
 })
@@ -53,6 +56,13 @@ const statusOptions = [
   { label: '进行中', value: 'in_progress' },
   { label: '已完成', value: 'done' },
   { label: '已取消', value: 'cancelled' },
+]
+
+const priorityFilterOptions = [
+  { label: '全部优先级', value: '' },
+  { label: '高', value: 'high' },
+  { label: '普通', value: 'normal' },
+  { label: '低', value: 'low' },
 ]
 
 const priorityOptions = [
@@ -92,8 +102,11 @@ async function loadTodos() {
     const data = await listTodos({
       categoryId: filters.categoryId,
       status: filters.status || undefined,
+      priority: filters.priority || undefined,
       keyword: filters.keyword || undefined,
       recurrence: filters.recurrence || undefined,
+      sortBy: filters.sortBy || undefined,
+      sortOrder: filters.sortOrder || undefined,
       page: filters.page,
       pageSize: filters.pageSize,
     })
@@ -230,6 +243,32 @@ function onFilterChange() {
   void loadTodos()
 }
 
+function onSortChange(payload: { prop: string; order: string | null }) {
+  const propMap: Record<string, string> = {
+    categoryName: 'category',
+    priority: 'priority',
+    status: 'status',
+    dueAt: 'dueAt',
+    updatedAt: 'updatedAt',
+    title: 'title',
+  }
+  const sortBy = propMap[payload.prop] || ''
+  if (!sortBy || !payload.order) {
+    filters.sortBy = ''
+    filters.sortOrder = ''
+  } else {
+    filters.sortBy = sortBy
+    filters.sortOrder = payload.order === 'ascending' ? 'asc' : 'desc'
+  }
+  filters.page = 1
+  void loadTodos()
+}
+
+function formatDateTime(v?: string) {
+  if (!v) return '-'
+  return v.replace('T', ' ').replace(/\.\d+Z?$/, '').slice(0, 19)
+}
+
 function recurrenceTag(row: Todo) {
   if (row.isTemplate) return { text: '固定模板', type: 'warning' as const }
   if (row.isMonthlyInstance) return { text: row.periodKey ? `月待办 ${row.periodKey}` : '月待办', type: '' as const }
@@ -237,10 +276,11 @@ function recurrenceTag(row: Todo) {
 }
 
 watch(
-  () => [route.query.status, route.query.categoryId, route.query.recurrence] as const,
-  ([status, categoryId, recurrence]) => {
+  () => [route.query.status, route.query.categoryId, route.query.recurrence, route.query.priority] as const,
+  ([status, categoryId, recurrence, priority]) => {
     filters.status = typeof status === 'string' ? status : ''
     filters.recurrence = typeof recurrence === 'string' ? recurrence : ''
+    filters.priority = typeof priority === 'string' ? priority : ''
     if (typeof categoryId === 'string' && categoryId) {
       const n = Number(categoryId)
       filters.categoryId = Number.isFinite(n) && n > 0 ? n : undefined
@@ -275,6 +315,9 @@ onMounted(async () => {
         <el-select v-model="filters.categoryId" clearable placeholder="全部分类" style="width: 140px" @change="onFilterChange">
           <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
         </el-select>
+        <el-select v-model="filters.priority" style="width: 130px" @change="onFilterChange">
+          <el-option v-for="o in priorityFilterOptions" :key="o.value || 'all'" :label="o.label" :value="o.value" />
+        </el-select>
         <el-select v-model="filters.status" style="width: 130px" @change="onFilterChange">
           <el-option v-for="o in statusOptions" :key="o.value || 'all'" :label="o.label" :value="o.value" />
         </el-select>
@@ -292,8 +335,15 @@ onMounted(async () => {
         <el-button type="primary" :loading="loading" @click="loadTodos">查询</el-button>
       </div>
 
-      <el-table :data="todos" v-loading="loading" stripe border empty-text="暂无待办">
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip>
+      <el-table
+        :data="todos"
+        v-loading="loading"
+        stripe
+        border
+        empty-text="暂无待办"
+        @sort-change="onSortChange"
+      >
+        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip sortable="custom">
           <template #default="{ row }">
             <span>{{ row.title }}</span>
             <el-tag v-if="recurrenceTag(row)" :type="recurrenceTag(row)!.type" size="small" class="ml">
@@ -301,15 +351,15 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="categoryName" label="分类" width="90" />
-        <el-table-column label="优先级" width="80">
+        <el-table-column prop="categoryName" label="分类" width="100" sortable="custom" />
+        <el-table-column prop="priority" label="优先级" width="100" sortable="custom">
           <template #default="{ row }">
             <el-tag v-if="row.priority === 'high'" type="danger" size="small">高</el-tag>
             <el-tag v-else-if="row.priority === 'low'" type="info" size="small">低</el-tag>
             <span v-else>普通</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="140" class-name="col-status">
+        <el-table-column prop="status" label="状态" width="140" class-name="col-status" sortable="custom">
           <template #default="{ row }">
             <el-select
               v-if="!row.isTemplate"
@@ -339,8 +389,16 @@ onMounted(async () => {
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="dueAt" label="截止" width="160" show-overflow-tooltip />
-        <el-table-column prop="updatedAt" label="更新" width="160" show-overflow-tooltip />
+        <el-table-column prop="dueAt" label="截止" width="170" show-overflow-tooltip sortable="custom">
+          <template #default="{ row }">
+            {{ formatDateTime(row.dueAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="updatedAt" label="更新" width="170" show-overflow-tooltip sortable="custom">
+          <template #default="{ row }">
+            {{ formatDateTime(row.updatedAt) }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>

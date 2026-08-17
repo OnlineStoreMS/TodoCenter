@@ -68,6 +68,8 @@ export async function listTodos(params: {
   priority?: string
   keyword?: string
   recurrence?: string
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc' | ''
   page?: number
   pageSize?: number
 }) {

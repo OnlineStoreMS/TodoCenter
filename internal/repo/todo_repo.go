@@ -67,11 +67,67 @@ func (r *TodoRepo) List(tenantID uint64, q dto.TodoListQuery) ([]model.Todo, int
 		return nil, 0, err
 	}
 	var list []model.Todo
-	err := dbq.Order("CASE status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END, priority DESC, id DESC").
+	err := dbq.Order(todoListOrderClause(q)).
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Find(&list).Error
 	return list, total, err
+}
+
+func todoListOrderClause(q dto.TodoListQuery) string {
+	order := strings.ToLower(strings.TrimSpace(q.SortOrder))
+	if order != "asc" && order != "desc" {
+		order = ""
+	}
+	by := strings.TrimSpace(q.SortBy)
+	switch by {
+	case "category", "categoryName", "categoryId":
+		if order == "" {
+			order = "asc"
+		}
+		return "category_id " + order + ", id DESC"
+	case "priority":
+		if order == "" {
+			order = "desc"
+		}
+		// high > normal > low
+		if order == "desc" {
+			return "CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 ELSE 3 END ASC, id DESC"
+		}
+		return "CASE priority WHEN 'low' THEN 0 WHEN 'normal' THEN 1 WHEN 'high' THEN 2 ELSE 3 END ASC, id DESC"
+	case "status":
+		if order == "" {
+			order = "asc"
+		}
+		if order == "asc" {
+			return "CASE status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END ASC, id DESC"
+		}
+		return "CASE status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END DESC, id DESC"
+	case "dueAt", "due_at":
+		if order == "" {
+			order = "asc"
+		}
+		// NULLS LAST for both directions via CASE
+		return "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END ASC, due_at " + order + ", id DESC"
+	case "updatedAt", "updated_at":
+		if order == "" {
+			order = "desc"
+		}
+		return "updated_at " + order + ", id DESC"
+	case "title":
+		if order == "" {
+			order = "asc"
+		}
+		return "title " + order + ", id DESC"
+	case "id":
+		if order == "" {
+			order = "desc"
+		}
+		return "id " + order
+	default:
+		// 默认：待处理优先 → 优先级高 → 新创建靠前
+		return "CASE status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'done' THEN 2 ELSE 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, id DESC"
+	}
 }
 
 func (r *TodoRepo) Get(tenantID, id uint64) (*model.Todo, error) {

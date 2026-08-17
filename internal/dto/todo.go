@@ -91,8 +91,12 @@ type TodoListQuery struct {
 	Keyword    string `form:"keyword"`
 	// RecurrenceFilter: all | none | monthly | templates（仅固定模板）| instances（仅月实例）
 	RecurrenceFilter string `form:"recurrence"`
-	Page             int    `form:"page"`
-	PageSize         int    `form:"pageSize"`
+	// SortBy: category | priority | status | dueAt | updatedAt | title | id
+	SortBy string `form:"sortBy"`
+	// SortOrder: asc | desc（默认 desc；截止默认 asc）
+	SortOrder string `form:"sortOrder"`
+	Page      int    `form:"page"`
+	PageSize  int    `form:"pageSize"`
 }
 
 type DashboardStats struct {
